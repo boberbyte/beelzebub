@@ -104,6 +104,107 @@ func handleSCPUpload(sess ssh.Session, sourceIp, user string, tr tracer.Tracer, 
 	}
 }
 
+// parseSCPPath extracts the file path from an scp command string.
+// e.g. "scp -f -p /etc/passwd" → "/etc/passwd"
+func parseSCPPath(command string) string {
+	parts := strings.Fields(command)
+	for i := len(parts) - 1; i >= 0; i-- {
+		if !strings.HasPrefix(parts[i], "-") && parts[i] != "scp" {
+			return parts[i]
+		}
+	}
+	return ""
+}
+
+// handleSCPDownload serves a Claude-generated deceptive file when an attacker
+// pulls a file from the honeypot via SCP (scp -f <path>).
+func handleSCPDownload(sess ssh.Session, path string, sourceIp, user string, tr tracer.Tracer, servConf parser.BeelzebubServiceConfiguration) {
+	if path == "" {
+		sess.Write([]byte{0x02})
+		return
+	}
+
+	filename := filepath.Base(path)
+
+	llmProvider, err := plugins.FromStringToLLMProvider(servConf.Plugin.LLMProvider)
+	if err != nil {
+		log.Errorf("SCP download: invalid LLM provider: %s", err)
+		sess.Write([]byte{0x02})
+		return
+	}
+
+	fileServConf := servConf
+	fileServConf.Plugin.Prompt = fmt.Sprintf(
+		"%s\n\nGenerate realistic raw file contents for the path `%s` on this system. "+
+			"Reply with ONLY the raw file contents — no markdown, no code fences, no explanations.",
+		servConf.Plugin.Prompt, path,
+	)
+
+	hp := plugins.BuildHoneypot(nil, tracer.SSH, llmProvider, fileServConf)
+	instance := plugins.InitLLMHoneypot(*hp)
+
+	content, err := instance.ExecuteModel("cat " + path)
+	if err != nil {
+		log.Errorf("SCP download: LLM generation failed for %s: %s", path, err)
+		sess.Write([]byte("\x01No such file or directory\n"))
+		return
+	}
+
+	data := []byte(content)
+
+	// Save a copy of what we served so defenders can review it
+	if mkErr := os.MkdirAll(samplesDir, 0750); mkErr == nil {
+		timestamp := time.Now().UTC().Format("20060102T150405Z")
+		savePath := filepath.Join(samplesDir, fmt.Sprintf("%s_%s_served_%s", timestamp, sourceIp, filename))
+		if writeErr := os.WriteFile(savePath, data, 0600); writeErr != nil {
+			log.Errorf("SCP download: failed to save served sample: %s", writeErr)
+		}
+	}
+
+	// SCP source protocol:
+	// 1. Read client ready signal
+	buf := make([]byte, 1)
+	if _, err := io.ReadFull(sess, buf); err != nil || buf[0] != 0 {
+		return
+	}
+
+	// 2. Send file header: C<mode> <size> <filename>\n
+	header := fmt.Sprintf("C0644 %d %s\n", len(data), filename)
+	if _, err := sess.Write([]byte(header)); err != nil {
+		return
+	}
+
+	// 3. Read go-ahead
+	if _, err := io.ReadFull(sess, buf); err != nil || buf[0] != 0 {
+		return
+	}
+
+	// 4. Send file data
+	sess.Write(data)
+
+	// 5. End-of-data marker
+	sess.Write([]byte{0x00})
+
+	// 6. Read final ack (best-effort)
+	io.ReadFull(sess, buf) //nolint:errcheck
+
+	log.WithFields(log.Fields{
+		"path":     path,
+		"size":     len(data),
+		"sourceIp": sourceIp,
+	}).Warn("SCP download — deceptive file served")
+
+	tr.TraceEvent(tracer.Event{
+		Msg:         "SCP Download — Deceptive File Served",
+		Protocol:    tracer.SSH.String(),
+		Status:      tracer.Stateless.String(),
+		SourceIp:    sourceIp,
+		User:        user,
+		Command:     fmt.Sprintf("scp -f %s (%d bytes served)", path, len(data)),
+		Description: servConf.Description,
+	})
+}
+
 // captureWgetCurl checks if a command contains wget/curl and fetches any URLs found in the background.
 func captureWgetCurl(command, sourceIp, user string, tr tracer.Tracer, servConf parser.BeelzebubServiceConfiguration) {
 	lower := strings.ToLower(command)
@@ -204,6 +305,11 @@ func (sshStrategy *SSHStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 					// Intercept SCP uploads before LLM handling
 					if strings.Contains(sess.RawCommand(), "scp") && strings.Contains(sess.RawCommand(), "-t") {
 						handleSCPUpload(sess, host, sess.User(), tr, servConf)
+						return
+					}
+					// Intercept SCP downloads — serve Claude-generated deceptive files
+					if strings.Contains(sess.RawCommand(), "scp") && strings.Contains(sess.RawCommand(), "-f") {
+						handleSCPDownload(sess, parseSCPPath(sess.RawCommand()), host, sess.User(), tr, servConf)
 						return
 					}
 

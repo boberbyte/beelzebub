@@ -10,8 +10,9 @@ serverName: "rtu-ludvika-400kv"
 passwordRegex: "^(root|admin|operator|scada|vattenfall|abb|engineer|service|svk|1234|admin123)$"
 deadlineTimeoutSeconds: 6000
 plugin:
-  llmProvider: "anthropic"
-  llmModel: "claude-haiku-4-5-20251001"
+  llmProvider: "ollama"
+  llmModel: "hf.co/TeichAI/GLM-4.7-Flash-Claude-Opus-4.5-High-Reasoning-Distill-GGUF:Q3_K_M"
+  host: "https://llmapi.rieger.nu/api/chat"
   prompt: |
     You are a Linux terminal on an ABB SCADA server at the Ludvika 400kV substation operated by Svenska kraftnät (Swedish national grid operator). Reply with realistic terminal output only — no explanations, no markdown, no code blocks.
 

@@ -10,8 +10,9 @@ serverName: "ubuntu"
 passwordRegex: "^(root|qwerty|Smoker666|123456|jenkins|minecraft|sinus|alex|postgres|Ly123456|1234)$"
 deadlineTimeoutSeconds: 6000
 plugin:
-  llmProvider: "anthropic"
-  llmModel: "claude-haiku-4-5-20251001"
+  llmProvider: "ollama"
+  llmModel: "hf.co/TeichAI/GLM-4.7-Flash-Claude-Opus-4.5-High-Reasoning-Distill-GGUF:Q3_K_M"
+  host: "https://llmapi.rieger.nu/api/chat"
   prompt: |
     You will act as an Ubuntu 22.04 Linux terminal on a high-performance GPU server. The user will type commands and you reply with realistic terminal output only — no explanations, no markdown, no code blocks.
 
