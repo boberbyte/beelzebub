@@ -1,16 +1,28 @@
 #!/bin/bash
 APIKEY="${VT_APIKEY}"
 COLLECTION_ID="be3674666b18993e444819ea3e3b049b2bfdc50c4587a8cf2fc89e65a1317ea1"
+UPLOADED_LOG="/home/azureuser/hephaestus/vt_uploaded.txt"
 
 if [ -z "$APIKEY" ]; then
   echo "ERROR: VT_APIKEY inte satt"
   exit 1
 fi
 
+touch "$UPLOADED_LOG"
+
+# Sätt läsrättigheter på samples (sparas som root av Docker)
+sudo chmod 644 * 2>/dev/null || true
+
 for f in *; do
   [ -f "$f" ] || continue
 
   hash=$(sha256sum "$f" | cut -d' ' -f1)
+
+  if grep -qF "$hash" "$UPLOADED_LOG"; then
+    echo "$f: redan uppladdad, hoppar över"
+    continue
+  fi
+
   echo -n "$f ($hash): "
 
   # Ladda upp fil
@@ -33,6 +45,7 @@ for f in *; do
       --header "x-apikey: $APIKEY" \
       --header "Content-Type: application/json" \
       --data "{\"data\":[{\"type\":\"file\",\"id\":\"$hash\"}]}" > /dev/null
+    echo "$hash" >> "$UPLOADED_LOG"
     echo "tillagd i collection"
   else
     echo "FEL: $result"
