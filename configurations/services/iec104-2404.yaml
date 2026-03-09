@@ -4,5 +4,5 @@ address: ":2404"
 description: "IEC 60870-5-104 RTU — Ludvika 400kV substation, Svenska kraftnät"
 serverName: "ABB REC670 Ludvika"
 serverVersion: "2.4.1"
-banner: "47"
+banner: "1"
 deadlineTimeoutSeconds: 120
